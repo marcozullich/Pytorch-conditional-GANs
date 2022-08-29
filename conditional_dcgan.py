@@ -5,6 +5,7 @@
 
 import os
 import argparse
+import shutil
 import numpy as np
 import torch
 from torch import nn, optim
@@ -237,3 +238,5 @@ if __name__ == '__main__':
     torch.save({'state_dict': model_g.state_dict()},
                         '{}/model_g_epoch_{}.pth'.format(
                             args.save_dir, args.epochs))
+    if args.clear_save_dir:
+        shutil.rmtree(args.save_dir)
