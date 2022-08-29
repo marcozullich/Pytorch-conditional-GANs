@@ -45,7 +45,7 @@ class ModelD(nn.Module):
         x = self.fc1(x)
         x = F.relu(x)
         x = self.fc2(x)
-        return F.sigmoid(x)
+        return torch.sigmoid(x)
 
 class ModelG(nn.Module):
     def __init__(self, z_dim):
@@ -71,7 +71,7 @@ class ModelG(nn.Module):
         x = self.bn2(x)
         x = F.relu(x)
         x = self.deconv2(x)
-        x = F.sigmoid(x)
+        x = torch.sigmoid(x)
         return x
         
 
@@ -93,6 +93,10 @@ if __name__ == '__main__':
             help='After how many epochs to print loss and save output samples.')
     parser.add_argument('--save_dir', type=str, default='models',
             help='Path to save the trained models.')
+    parser.add_argument('--save_dir_definitive', type=str, default='models_def',
+            help="Path to save the final generator.")
+    parser.add_argument("--clear_save_dir", action="store_true", default=False,
+            help="If true, delete the save directory and keep only the last instance of generator.")
     parser.add_argument('--samples_dir', type=str, default='samples',
             help='Path to save the output samples.')
     args = parser.parse_args()
@@ -127,13 +131,14 @@ if __name__ == '__main__':
     
     label = torch.FloatTensor(args.batch_size)
     one_hot_labels = torch.FloatTensor(args.batch_size, 10)
-    if args.cuda:
-        model_d.cuda()
-        model_g.cuda()
-        input, label = input.cuda(), label.cuda()
-        noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
-        one_hot_labels = one_hot_labels.cuda()
-        fixed_labels = fixed_labels.cuda()
+
+    device = "cuda" if args.cuda else "cpu"
+    model_d.to(device)
+    model_g.to(device)
+    input, label = input.to(device), label.to(device)
+    noise, fixed_noise = noise.to(device), fixed_noise.to(device)
+    one_hot_labels = one_hot_labels.to(device)
+    fixed_labels = fixed_labels.to(device)
 
     optim_d = optim.SGD(model_d.parameters(), lr=args.lr)
     optim_g = optim.SGD(model_g.parameters(), lr=args.lr)
@@ -154,8 +159,8 @@ if __name__ == '__main__':
             batch_size = train_x.size(0)
             train_x = train_x.view(-1, INPUT_SIZE)
             if args.cuda:
-                train_x = train_x.cuda()
-                train_y = train_y.cuda()
+                train_x = train_x.to(device)
+                train_y = train_y.to(device)
 
             input.resize_as_(train_x).copy_(train_x)
             label.resize_(batch_size).fill_(real_label)
@@ -166,13 +171,13 @@ if __name__ == '__main__':
 
             output = model_d(inputv, Variable(one_hot_labels))
             optim_d.zero_grad()
-            errD_real = criterion(output, labelv)
+            errD_real = criterion(output.squeeze(), labelv)
             errD_real.backward()
-            realD_mean = output.data.cpu().mean()
+            realD_mean = output.cpu().mean()
             
             one_hot_labels.zero_()
             rand_y = torch.from_numpy(
-                np.random.randint(0, NUM_LABELS, size=(batch_size,1))).cuda()
+                np.random.randint(0, NUM_LABELS, size=(batch_size,1))).to(device)
             one_hot_labels.scatter_(1, rand_y.view(batch_size,1), 1)
             noise.resize_(batch_size, args.nz).normal_(0,1)
             label.resize_(batch_size).fill_(fake_label)
@@ -181,8 +186,8 @@ if __name__ == '__main__':
             onehotv = Variable(one_hot_labels)
             g_out = model_g(noisev, onehotv)
             output = model_d(g_out, onehotv)
-            errD_fake = criterion(output, labelv)
-            fakeD_mean = output.data.cpu().mean()
+            errD_fake = criterion(output.squeeze(), labelv)
+            fakeD_mean = output.cpu().mean()
             errD = errD_real + errD_fake
             errD_fake.backward()
             optim_d.step()
@@ -191,7 +196,7 @@ if __name__ == '__main__':
             noise.normal_(0,1)
             one_hot_labels.zero_()
             rand_y = torch.from_numpy(
-                np.random.randint(0, NUM_LABELS, size=(batch_size,1))).cuda()
+                np.random.randint(0, NUM_LABELS, size=(batch_size,1))).to(device)
             one_hot_labels.scatter_(1, rand_y.view(batch_size,1), 1)
             label.resize_(batch_size).fill_(real_label)
             onehotv = Variable(one_hot_labels)
@@ -199,20 +204,20 @@ if __name__ == '__main__':
             labelv = Variable(label)
             g_out = model_g(noisev, onehotv)
             output = model_d(g_out, onehotv)
-            errG = criterion(output, labelv)
+            errG = criterion(output.squeeze(), labelv)
             optim_g.zero_grad()
             errG.backward()
             optim_g.step()
             
-            d_loss += errD.data[0]
-            g_loss += errG.data[0]
+            d_loss += errD.item()
+            g_loss += errG.item()
             if batch_idx % args.print_every == 0:
                 print(
                 "\t{} ({} / {}) mean D(fake) = {:.4f}, mean D(real) = {:.4f}".
                     format(epoch_idx, batch_idx, len(train_loader), fakeD_mean,
                         realD_mean))
 
-                g_out = model_g(fixed_noise, fixed_labels).data.view(
+                g_out = model_g(fixed_noise, fixed_labels).view(
                     SAMPLE_SIZE, 1, 28,28).cpu()
                 save_image(g_out,
                     '{}/{}_{}.png'.format(
@@ -221,10 +226,14 @@ if __name__ == '__main__':
 
         print('Epoch {} - D loss = {:.4f}, G loss = {:.4f}'.format(epoch_idx,
             d_loss, g_loss))
-        if epoch_idx % args.save_every == 0:
+        if (epoch_idx+1) % args.save_every == 0:
             torch.save({'state_dict': model_d.state_dict()},
                         '{}/model_d_epoch_{}.pth'.format(
-                            args.save_dir, epoch_idx))
+                            args.save_dir, epoch_idx+1))
             torch.save({'state_dict': model_g.state_dict()},
                         '{}/model_g_epoch_{}.pth'.format(
-                            args.save_dir, epoch_idx))
+                            args.save_dir, epoch_idx+1))
+    
+    torch.save({'state_dict': model_g.state_dict()},
+                        '{}/model_g_epoch_{}.pth'.format(
+                            args.save_dir, args.epochs))
