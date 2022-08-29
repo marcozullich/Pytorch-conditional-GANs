@@ -4,6 +4,7 @@ samples/
 sample_outputs/
 data/
 models/
+models_def/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
